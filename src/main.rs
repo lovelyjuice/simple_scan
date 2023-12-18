@@ -331,9 +331,9 @@ fn parse_ports(mut ports: String) -> Vec<u16> {
         ("db", "1433,1521,3306,5000,5236,5432,6379,9002,11211,27017"),
         ("web", "80-86,443,2443,3443,7443,8443,8080-8086,8009")
     ]);
-    ports = ports.split(",").map(|port| ports_map.get(port).unwrap_or(&port).clone()).collect::<Vec<_>>().join(",");
+    let ports = ports.split(",").map(|port| ports_map.get(port).unwrap_or(&port).clone());
     let mut port_list: BTreeSet<u16> = BTreeSet::new();
-    for port in ports.split(",") {
+    for port in ports {
         if port.contains("-") {
             let port_range = port.split("-").collect::<Vec<_>>();
             let port_range = port_range[0].parse::<u16>().expect("Parse start port error.")
