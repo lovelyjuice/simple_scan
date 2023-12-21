@@ -3,7 +3,7 @@ extern crate ipnet;
 use std::cmp::max;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
@@ -17,6 +17,7 @@ use ipnet::{Ipv4AddrRange, Ipv4Net};
 use surge_ping;
 use tokio;
 use tokio::net::TcpSocket;
+use tokio::{io, time};
 use tokio::time::Duration;
 
 fn main() {
@@ -36,7 +37,6 @@ async fn start() {
         .arg(Arg::new("target")
             .short('t')
             .long("target")
-            .required(true)
             .value_parser(value_parser!(String))
             .help("Target need to scan. Example: 10.0.0.0/8,172.16.0.0-172.31.255.255,192.168.1.1"))
         .arg(Arg::new("port")
@@ -77,14 +77,24 @@ async fn start() {
             .long("pe")
             .default_value("21,22,23,80-83,443,445,3389,8080")
             .help("Ports used to discovery alive hosts"))
+        .arg(Arg::new("infile")
+            .short('i')
+            .long("infile")
+            .help("Input file"))
         .arg(Arg::new("outfile")
             .short('o')
             .long("outfile")
             .help("Output file"))
+        .arg(Arg::new("wait_time")
+            .short('w')
+            .long("wait-time")
+            .default_value("0")
+            .value_parser(value_parser!(u8))
+            .help("After the TCP connection is established, wait for a few seconds before verifying if the connection is still connected."))
         .get_matches();
 
 
-    let scan_net = matches.get_one::<String>("target").unwrap();
+    let scan_targets = matches.get_one::<String>("target");
     let mut ports: Vec<u16> = parse_ports(matches.get_one::<String>("port").unwrap().clone());
     let timeout: u8 = matches.get_one::<u8>("timeout").unwrap().to_owned();
     let retry: u8 = matches.get_one::<u8>("retry").unwrap().to_owned();
@@ -93,15 +103,23 @@ async fn start() {
     let ping_discovery = matches.get_flag("no_ping_discovery");
     let port_discovery = matches.get_flag("no_port_discovery");
     let discovery_ports: Vec<u16> = parse_ports(matches.get_one::<String>("discovery_ports").unwrap().clone());
-    let connect_config = ConnectConfig { timeout, retry };
-
+    let wait_time: u8 = matches.get_one::<u8>("wait_time").unwrap().to_owned();
+    let connect_config = ConnectConfig { timeout, retry, wait_time };
+    let infile = if let Some(infile) = matches.get_one::<String>("infile") {
+        let infile = File::open(infile).expect("Unable to open input file");
+        Some(BufReader::new(infile))
+    } else { None };
     let mut outfile = if let Some(outfile) = matches.get_one::<String>("outfile") {
-        let outfile = File::create(outfile).expect("Unable to create file");
+        let outfile = File::create(outfile).expect("Unable to create result file");
         Some(BufWriter::with_capacity(100, outfile))
     } else { None };
 
     let mut discovery_services: HashMap<Ipv4Addr, Vec<u16>> = HashMap::new();
-    let (net_hosts, mut single_hosts) = parse_hosts(scan_net);
+    let (net_hosts, mut single_hosts) = if let Some(mut infile) = infile {
+        let mut content: String = Default::default();
+        infile.read_to_string(&mut content).expect("Read target from infile failed.");
+        parse_hosts(&content)
+    } else { parse_hosts(scan_targets.unwrap()) };
     let mut need_scan_host = Arc::new(net_hosts);    // 当扫描10.0.0.0/8时，net_hosts占用60M空间，由于其他线程需要使用该变量，因此使用Arc可以降低扫描时一半的内存占用
 
     // 网关存活探测
@@ -147,7 +165,7 @@ async fn start() {
         tokio::spawn(ping_scan_with_channel(
             need_scan_host.clone(),
             concurrency.clone(),
-            ConnectConfig { timeout: timeout.clone(), retry: retry.clone() },
+            connect_config.clone(),
             tx,
         ));
         for host in rx {
@@ -165,7 +183,7 @@ async fn start() {
         for host_port in rx {
             println!("Port discovery {}:{} is alive", host_port.host, host_port.port);
             alive_hosts.insert(host_port.host);
-            if let Some(ref mut outfile)=outfile {
+            if let Some(ref mut outfile) = outfile {
                 writeln!(outfile, "{}:{}", host_port.host, host_port.port);
             }
             discovery_services.entry(host_port.host).or_insert_with(Vec::new).push(host_port.port);
@@ -202,11 +220,11 @@ async fn start() {
     for host_port in rx {
         ports_num += 1;
         println!("{}:{}", host_port.host, host_port.port);
-        if let Some(ref mut outfile)=outfile {
+        if let Some(ref mut outfile) = outfile {
             writeln!(outfile, "{}:{}", host_port.host, host_port.port);
         }
     }
-    if let Some(mut outfile)=outfile {
+    if let Some(mut outfile) = outfile {
         outfile.flush().unwrap();
     }
     for ports in discovery_services.values() {
@@ -289,8 +307,21 @@ async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> bool {
         ).await
         {
             Ok(timeout_result) => {
-                if let Ok(_) = timeout_result {
+                if let Ok(stream) = timeout_result {
                     //没超时且连接成功, stream drop掉后 tcp连接会被自动释放
+                    if config.wait_time > 0 {
+                        time::sleep(Duration::from_secs(config.wait_time as u64)).await;
+                        stream.writable().await;
+                        let mut buffer = [0; 1];
+                        match stream.try_write(&mut buffer) {
+                            Ok(n) => {
+                                return true;    // 写数据成功说明tcp连接正常
+                            }
+                            Err(e) => {
+                                return false;   // 写失败了说明tcp连接已关闭
+                            }
+                        }
+                    }
                     return true;
                 }
                 return false; // 没超时但连接异常
@@ -307,7 +338,7 @@ fn parse_hosts(scan_net: &String) -> (Vec<Ipv4Addr>, Vec<Ipv4Addr>) {
     let mut net_hosts: Vec<Ipv4Addr> = vec![];
     let mut single_hosts: Vec<Ipv4Addr> = vec![];
 
-    for target in scan_net.split(",") {
+    for target in scan_net.split(&[',', '\n', '\r'][..]).filter(|x| !x.is_empty()) {
         if target.contains("/") {
             net_hosts.extend(Ipv4Net::from_str(target).expect("Parse CIDR address error.").hosts().collect::<Vec<_>>());
         } else if target.contains("-") {
@@ -331,9 +362,20 @@ fn parse_ports(ports: String) -> Vec<u16> {
         ("db", "1433,1521,3306,5000,5236,5432,6379,9002,11211,27017"),
         ("web", "80-86,443,2443,3443,7443,8443,8080-8086,8009")
     ]);
-    let ports = ports.split(',').map(|port| ports_map.get(port).unwrap_or(&port).clone()).flat_map(|x|x.split(','));
+    let ports = ports.split(',')
+        .map(|port| ports_map.get(port).unwrap_or(&port).clone())
+        .collect::<Vec<&str>>().join(",");
+    let mut port_list = ports_to_vec(&ports);
+    if port_list.len() > 10000 {    // 超过一万则先扫常见端口
+        let common_ports = ports_to_vec(ports_map.get("goby_common").unwrap());
+        port_list.sort_by_cached_key(|port| common_ports.iter().position(|x| x == port).unwrap_or(usize::MAX));
+    }
+    return port_list;
+}
+
+fn ports_to_vec(ports: &str) -> Vec<u16> {
     let mut port_list: BTreeSet<u16> = BTreeSet::new();
-    for port in ports {
+    for port in ports.split(',') {
         if port.contains("-") {
             let port_range = port.split("-").collect::<Vec<_>>();
             let port_range = port_range[0].parse::<u16>().expect("Parse start port error.")
@@ -344,7 +386,7 @@ fn parse_ports(ports: String) -> Vec<u16> {
             port_list.insert(port);
         }
     }
-    return port_list.into_iter().collect::<Vec<_>>();
+    port_list.into_iter().collect::<Vec<u16>>()
 }
 
 fn is_not_network_or_boardcast(&host: &Ipv4Addr) -> bool {
@@ -361,4 +403,5 @@ pub struct HostPort {
 pub struct ConnectConfig {
     pub timeout: u8,
     pub retry: u8,
+    pub wait_time: u8,  // tcp连接建立完成多少秒后测试连接的有效性
 }
