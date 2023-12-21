@@ -317,7 +317,7 @@ async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> bool {
                             Ok(n) => {
                                 return true;    // 写数据成功说明tcp连接正常
                             }
-                            Err(e) => {
+                            Err(_) => {
                                 return false;   // 写失败了说明tcp连接已关闭
                             }
                         }
