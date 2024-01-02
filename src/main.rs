@@ -80,7 +80,7 @@ async fn start() {
         .arg(Arg::new("infile")
             .short('i')
             .long("infile")
-            .help("Input file"))
+            .help("Input file contains IP address"))
         .arg(Arg::new("outfile")
             .short('o')
             .long("outfile")
@@ -117,7 +117,7 @@ async fn start() {
     let mut discovery_services: HashMap<Ipv4Addr, Vec<u16>> = HashMap::new();
     let (net_hosts, mut single_hosts) = if let Some(mut infile) = infile {
         let mut content: String = Default::default();
-        infile.read_to_string(&mut content).expect("Read target from infile failed.");
+        infile.read_to_string(&mut content).expect("Read targets from infile failed.");
         parse_hosts(&content)
     } else { parse_hosts(scan_targets.unwrap()) };
     let mut need_scan_host = Arc::new(net_hosts);    // 当扫描10.0.0.0/8时，net_hosts占用60M空间，由于其他线程需要使用该变量，因此使用Arc可以降低扫描时一半的内存占用
