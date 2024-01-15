@@ -11,11 +11,13 @@ use std::process::exit;
 use std::str::FromStr;
 use std::sync::{Arc, mpsc};
 
-#[cfg(target_os = "linux")]
+
+#[cfg(target_os = "windows")]
+use winping::{Buffer, AsyncPinger};
+
 use std::{sync::OnceLock};
 
-#[cfg(target_os = "linux")]
-static USE_PING_CMD: OnceLock<bool> = OnceLock::new();
+static HAS_RAW_SOCKET_PRIV: OnceLock<bool> = OnceLock::new();
 
 use clap;
 use clap::{Arg, Command, value_parser};
@@ -120,23 +122,34 @@ async fn start() {
         Some(BufWriter::with_capacity(100, outfile))
     } else { None };
 
+    #[cfg(target_os = "linux")]{
+        if let Ok(num) = rlimit::increase_nofile_limit(u64::MAX){
+            println!("Increase nofile limit: {}", num);
+        };
+    }
+
     let mut discovery_services: HashMap<Ipv4Addr, Vec<u16>> = HashMap::new();
     let (net_hosts, mut single_hosts) = if let Some(mut infile) = infile {
         let mut content: String = Default::default();
         infile.read_to_string(&mut content).expect("Read targets from infile failed.");
         parse_hosts(&content)
     } else { parse_hosts(scan_targets.unwrap()) };
-    let mut need_scan_host = Arc::new(net_hosts);    // 当扫描10.0.0.0/8时，net_hosts占用60M空间，由于其他线程需要使用该变量，因此使用Arc可以降低扫描时一半的内存占用
+    let mut need_scan_hosts = Arc::new(net_hosts);    // 当扫描10.0.0.0/8时，net_hosts占用60M空间，由于其他线程需要使用该变量，因此使用Arc可以降低扫描时一半的内存占用
 
-    #[cfg(target_os = "linux")]{
-        if ping_discovery {
-            let payload = [0; 8];
-            match surge_ping::ping("127.0.0.1".parse().unwrap(), &payload).await {
-                Ok(_) => { USE_PING_CMD.set(false).unwrap(); }
-                Err(e) => {
-                    println!("Can not use raw socket to ping, because {}.\nTry to use ping command", e.to_string());
-                    USE_PING_CMD.set(true).unwrap();
-                }
+    // 判断是否有 raw socket 权限
+    if ping_discovery {
+        let payload = [0; 8];
+        match surge_ping::ping("127.0.0.1".parse().unwrap(), &payload).await {
+            Ok(_) => {
+                println!("Use raw socket to ping.");
+                HAS_RAW_SOCKET_PRIV.set(true).unwrap();
+            }
+            Err(e) => {
+                #[cfg(target_os = "windows")]
+                println!("Can not use raw socket to ping, because {}.\nTry to use IcmpSendEcho2 API.", e.to_string());
+                #[cfg(not(target_os = "windows"))]
+                println!("Can not use raw socket to ping, because {}.\nTry to use ping command.", e.to_string());
+                HAS_RAW_SOCKET_PRIV.set(false).unwrap();
             }
         }
     }
@@ -147,7 +160,7 @@ async fn start() {
         println!("Start pinging gateways to discover active subnets.");
         let mut alive_gateways = HashSet::new();
         let (tx, rx) = mpsc::channel();
-        let gateways: Vec<&Ipv4Addr> = need_scan_host.iter().filter(|&host| host.octets()[3] == 1 || host.octets()[3] == 254).collect::<Vec<&Ipv4Addr>>();
+        let gateways: Vec<&Ipv4Addr> = need_scan_hosts.iter().filter(|&host| host.octets()[3] == 1 || host.octets()[3] == 254).collect::<Vec<&Ipv4Addr>>();
         let gateways: Vec<_> = gateways.iter().cloned().copied().collect();
         let gateways = Arc::new(gateways);
         tokio::spawn(ping_scan_with_channel(gateways.clone(), concurrency.clone(), connect_config.clone(), tx));
@@ -160,21 +173,22 @@ async fn start() {
         let gateway_discovery_port: Vec<u16> = vec![21, 22, 23, 80, 443];
         let (tx, rx) = mpsc::channel();
         tokio::spawn(port_scan_with_channel(gateways.clone(), gateway_discovery_port.clone(), concurrency.clone(), connect_config.clone(), tx));
-        for host_port in rx {
-            println!("Port scan gateway {} alive", host_port.host);
-            alive_gateways.insert(host_port.host);
+        for service in rx {
+            println!("Port scan gateway {}:{} alive", service.host, service.port);
+            alive_gateways.insert(service.host);
         }
         for alive_gateway in alive_gateways {
             let alive_subnet = Ipv4Net::with_netmask(alive_gateway, Ipv4Addr::new(255, 255, 255, 0)).unwrap();
             // let a=alive_gateway;
-            println!("Alive subnets：{}", alive_subnet.trunc());
+            println!("Alive subnet：{}", alive_subnet.trunc());
             alive_subnets.push(alive_subnet);
         }
+        println!("Found {} alive subnets in total!", alive_subnets.len());
         let gateway_discover_hosts = alive_subnets.into_iter().flat_map(|subnet| (subnet.hosts())).collect::<Vec<Ipv4Addr>>();
-        need_scan_host = Arc::from(gateway_discover_hosts);
+        need_scan_hosts = Arc::from(gateway_discover_hosts);
     }
 
-    let combined_vec: Vec<_> = need_scan_host.iter().cloned().chain(single_hosts.iter().cloned()).collect();
+    let combined_vec: Vec<_> = need_scan_hosts.iter().cloned().chain(single_hosts.iter().cloned()).collect();
     let mut need_scan_host = Arc::new(combined_vec);
     let mut alive_hosts = HashSet::new();
     // ping存活探测
@@ -191,6 +205,7 @@ async fn start() {
             println!("ping {} is alive", host);
             alive_hosts.insert(host);
         }
+        println!("Found {} alive hosts with PING!", alive_hosts.len());
     }
 
     if port_discovery {
@@ -200,13 +215,13 @@ async fn start() {
         tokio::spawn(
             port_scan_with_channel(need_scan_host.clone(), discovery_ports.clone(), concurrency.clone(), connect_config.clone(), tx)
         );
-        for host_port in rx {
-            println!("Port discovery {}:{} is alive", host_port.host, host_port.port);
-            alive_hosts.insert(host_port.host);
+        for service in rx {
+            println!("Port discovery {}:{} is alive.", service.host, service.port);
+            alive_hosts.insert(service.host);
             if let Some(ref mut outfile) = outfile {
-                write!(outfile, "{}:{}\r\n", host_port.host, host_port.port);
+                write!(outfile, "{}:{}\r\n", service.host, service.port);
             }
-            discovery_services.entry(host_port.host).or_insert_with(Vec::new).push(host_port.port);
+            discovery_services.entry(service.host).or_insert_with(Vec::new).push(service.port);
         }
         // 从需要扫描的端口中去掉已探测的端口
         for discovery_port in discovery_ports.iter() {
@@ -222,6 +237,8 @@ async fn start() {
         if alive_hosts.is_empty() {
             println!("No alive host found. Exit! Or you can disable host discovery by add --npd --np");
             exit(1);
+        }else {
+            println!("Found {} alive hosts in total!", alive_hosts.len());
         }
         need_scan_host = Arc::from(alive_hosts.into_iter().collect::<Vec<Ipv4Addr>>());
     }
@@ -237,11 +254,11 @@ async fn start() {
         tx,
     ));
     let mut ports_num = 0;
-    for host_port in rx {
+    for service in rx {
         ports_num += 1;
-        println!("{}:{}", host_port.host, host_port.port);
+        println!("{}:{}", service.host, service.port);
         if let Some(ref mut outfile) = outfile {
-            write!(outfile, "{}:{}\r\n", host_port.host, host_port.port);
+            write!(outfile, "{}:{}\r\n", service.host, service.port);
         }
     }
     if let Some(mut outfile) = outfile {
@@ -270,36 +287,29 @@ async fn ping_scan_with_channel(
         let host = host.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            let payload = [0; 8];
-            for _ in 0..=retry {
-                #[cfg(target_os = "linux")]{
-                    if *USE_PING_CMD.get().unwrap() {
-                        if cmd_ping(&host, &timeout).await {
-                            tx.send(host);
-                            break;
-                        };
-                    } else {
-                        match tokio::time::timeout(
-                            Duration::from_secs(timeout as u64),
-                            surge_ping::ping(IpAddr::V4(host.clone()), &payload),
-                        ).await
-                        {
-                            Ok(timeout_result) => {
-                                match timeout_result {
-                                    Ok(_ping_result) => {
-                                        tx.send(host);
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        eprintln!("ping error: {}", e.to_string());
-                                    }
-                                }
+            let payload = [0; 0];
+            #[cfg(not(target_os = "windows"))]{
+                if !*HAS_RAW_SOCKET_PRIV.get().unwrap() {
+                    if cmd_ping(&host, &timeout, &retry).await {
+                        tx.send(host);
+                    };
+                    return;
+                }
+            }
+            for i in 0..=retry {
+                if !*HAS_RAW_SOCKET_PRIV.get().unwrap() {
+                    #[cfg(target_os = "windows")]{
+                        let pinger = AsyncPinger::new();
+                        let buffer = Buffer::new();
+                        match pinger.send(IpAddr::V4(host), buffer).await.result {
+                            Ok(_) => {
+                                tx.send(host);
+                                return;
                             }
-                            Err(_) => {} // 超时
+                            _ => {}
                         }
                     }
-                }
-                #[cfg(target_os = "windows")]{
+                } else {
                     match tokio::time::timeout(
                         Duration::from_secs(timeout as u64),
                         surge_ping::ping(IpAddr::V4(host.clone()), &payload),
@@ -311,22 +321,23 @@ async fn ping_scan_with_channel(
                                     tx.send(host);
                                     break;
                                 }
-                                Err(e) => {
-                                    eprintln!("ping error: {}", e.to_string());
+                                Err(_) => {
+                                    // eprintln!("ping error: {}", e.to_string());
                                 }
                             }
                         }
                         Err(_) => {} // 超时
                     }
                 }
+                if i > 0 { tokio::time::sleep(Duration::from_millis(500)).await; }
             }
         });
     }
 }
 
-#[cfg(target_os = "linux")]
-async fn cmd_ping(ip: &Ipv4Addr, timeout: &u8) -> bool {
-    let output = tokio::process::Command::new("ping").args(["-c", "1", "-W", &timeout.to_string(), &ip.to_string()]).output().await.unwrap();
+#[cfg(not(target_os = "windows"))]
+async fn cmd_ping(ip: &Ipv4Addr, timeout: &u8, retry: &u8) -> bool {
+    let output = tokio::process::Command::new("ping").args(["-c", &(retry + 1).to_string(), "-W", &timeout.to_string(), &ip.to_string()]).output().await.unwrap();
     let raw_output = String::from_utf8(output.stdout).unwrap();
     if raw_output.contains("100% packet loss") {
         return false;
@@ -339,7 +350,7 @@ async fn port_scan_with_channel(
     ports: Vec<u16>,
     concurrency: usize,
     config: ConnectConfig,
-    tx: mpsc::Sender<HostPort>,
+    tx: mpsc::Sender<Service>,
 ) {
     let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
     let tx = Arc::new(tx);
@@ -354,7 +365,7 @@ async fn port_scan_with_channel(
                 let _permit = permit;
                 let config = config.clone();
                 if connect(host.clone(), port, &config).await {
-                    tx.send(HostPort { host, port }).expect("Send message fail.");
+                    tx.send(Service { host, port }).expect("Send message fail.");
                 }
             });
         }
@@ -392,7 +403,7 @@ async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> bool {
             }
             Err(e) => { // 超时
                 let mut error_string = e.to_string();
-                assert!(!error_string.to_lowercase().contains("too many open files"), "Too many open files. Please reduce batch size. The default is 5000. Try -b 2500.");
+                assert!(!error_string.to_lowercase().contains("too many open files"), "Too many open files. Please reduce concurrency.");
 
                 // println!("{}:{}超时", ip, port);
             }
@@ -446,12 +457,12 @@ fn ports_to_vec(ports: &str) -> Vec<u16> {
     let mut port_list: BTreeSet<u16> = BTreeSet::new();
     for port in ports.split(',') {
         if port.contains("-") {
-            let port_range = port.split("-").collect::<Vec<_>>();
+            let port_range = port.split("-").map(str::trim).collect::<Vec<_>>();
             let port_range = port_range[0].parse::<u16>().expect("Parse start port error.")
                 ..=port_range[1].parse::<u16>().expect("Parse end port error.");
             port_list.extend(port_range);
         } else {
-            let port = port.parse::<u16>().expect("Parse port error.");
+            let port = port.trim().parse::<u16>().expect("Parse port error.");
             port_list.insert(port);
         }
     }
@@ -463,7 +474,7 @@ fn is_not_network_or_boardcast(&host: &Ipv4Addr) -> bool {
 }
 
 #[derive(Copy, Clone)]
-pub struct HostPort {
+pub struct Service {
     pub host: Ipv4Addr,
     pub port: u16,
 }
