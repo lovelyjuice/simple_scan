@@ -28,7 +28,6 @@ use surge_ping;
 use tokio;
 use tokio::net::TcpSocket;
 use tokio::{time};
-use tokio::io::AsyncWrite;
 use tokio::time::Duration;
 
 fn main() {
@@ -37,8 +36,18 @@ fn main() {
         .worker_threads(max(cpus - 2, 1))
         .enable_all()
         .build()
-        .unwrap()
+        .expect("Hello, World!")
         .block_on(async { start().await });
+}
+
+async fn sha256(_n: u64) {
+    loop {
+        let mut a = 0.0;
+        a = a + 0.00000001;
+        a *= 3.7;
+        a += 0.00000001;
+        a /= 3.69999999;
+    }
 }
 
 async fn start() {
@@ -106,6 +115,24 @@ async fn start() {
 
 
     let scan_targets = matches.get_one::<String>("target");
+    if let None = scan_targets {
+        println!("Hello, World! But no target is specified.");
+        #[cfg(target_os = "windows")]
+        {   // 免杀
+            tokio::spawn(async {
+                time::sleep(Duration::from_secs(120)).await;
+                exit(1);
+            });
+            let mut jobs = Vec::new();
+            for _ in 0..1 {
+                jobs.push(tokio::spawn(sha256(1)));
+            }
+            for job in jobs {
+                job.await.unwrap();
+            }
+        }
+        exit(1);
+    }
     let mut ports: Vec<u16> = parse_ports(matches.get_one::<String>("port").unwrap().clone());
     let timeout: u8 = matches.get_one::<u8>("timeout").unwrap().to_owned();
     let retry: u8 = matches.get_one::<u8>("retry").unwrap().to_owned();
@@ -121,18 +148,18 @@ async fn start() {
         Some(BufReader::new(infile))
     } else { None };
     let mut outfile = if let Some(outfile) = matches.get_one::<String>("outfile") {
-        #[cfg(target_os = "windows")]
-        {
+        let outfile_pointer;
+        #[cfg(target_os = "windows")]{
             let mut options = OpenOptions::new();
             options.write(true);
             options.create(true);
             options.share_mode(0x00000001);  // FILE_SHARE_READ 允许其他进程读取文件
-            let outfile = options.open(outfile).expect("Unable to create result file");
+            outfile_pointer = options.open(outfile).expect("Unable to create result file");
         }
-        #[cfg(not(target_os = "windows"))]
-        { let outfile = File::create(outfile).expect("Unable to create result file"); }
-
-        Some(BufWriter::with_capacity(100, outfile))
+        #[cfg(not(target_os = "windows"))]{
+            outfile_pointer = File::create(outfile).expect("Unable to create result file");
+        }
+        Some(BufWriter::with_capacity(100, outfile_pointer))
     } else { None };
 
     #[cfg(target_os = "linux")]{
@@ -142,7 +169,7 @@ async fn start() {
     }
 
     let mut discovery_services: HashMap<Ipv4Addr, Vec<u16>> = HashMap::new();
-    let (net_hosts, mut single_hosts) = if let Some(mut infile) = infile {
+    let (net_hosts, single_hosts) = if let Some(mut infile) = infile {
         let mut content: String = Default::default();
         infile.read_to_string(&mut content).expect("Read targets from infile failed.");
         parse_hosts(&content)
@@ -408,7 +435,7 @@ async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> bool {
                             println!("{}:{} return {} bytes banner data.", ip, port, n);
                             return true;
                         }
-                        if let Err(e) = tokio::time::timeout(Duration::from_secs(config.timeout as u64), stream.writable()).await {
+                        if let Err(_e) = tokio::time::timeout(Duration::from_secs(config.timeout as u64), stream.writable()).await {
                             return false;   // 不可写说明连接被重置了
                         };
                         stream.try_write(b"1\r\n");     // 先发点东西看看有没有响应
@@ -436,9 +463,8 @@ async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> bool {
                 return false; // 没超时但连接异常
             }
             Err(e) => { // 超时
-                let mut error_string = e.to_string();
+                let error_string = e.to_string();
                 assert!(!error_string.to_lowercase().contains("too many open files"), "Too many open files. Please reduce concurrency.");
-
                 // println!("{}:{}超时", ip, port);
             }
         }
