@@ -1,7 +1,7 @@
 use std::cmp::max;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use clap;
-use clap::{Arg, Command, value_parser};
+use clap::{Arg, ArgMatches, Command, value_parser};
 use ipnet;
 use ipnet::{Ipv4AddrRange, Ipv4Net};
 use muddy::{m, muddy_init};
@@ -42,69 +42,7 @@ fn main() {
 }
 
 async fn start() {
-    let matches = Command::new("Simple").version("0.1.0")
-        .author("me")
-        .about(m!("Scan ports"))
-        .arg(Arg::new("target")
-            .short('t')
-            .long("target")
-            .value_parser(value_parser!(String))
-            .help(m!("Target need to scan. Example: 10.0.0.0/8,172.16.0.0-172.31.255.255,192.168.1.1")))
-        .arg(Arg::new("port")
-            .short('p')
-            .long("port")
-            .default_value(m!("goby_enterprise"))
-            .help(m!("Ports to scan. Example: 21,22,80-83,db,web,win,goby_enterprise,goby_common,goby_default,fscan_default")))
-        .arg(Arg::new("timeout")
-            .long("timeout")
-            .default_value("2")
-            .value_parser(value_parser!(u8))
-            .help(m!("Connection timeout, the unit is seconds.")))
-        .arg(Arg::new("retry")
-            .short('r')
-            .long("retry")
-            .default_value("1")
-            .value_parser(value_parser!(u8))
-            .help(m!("Retry times")))
-        .arg(Arg::new("concurrency")
-            .short('c')
-            .long("concurrency")
-            .default_value("600")
-            .value_parser(value_parser!(usize))
-            .help(m!("Maximum concurrency")))
-        .arg(Arg::new(m!("no_gateway_discovery"))
-            .long("ngd")
-            .action(clap::ArgAction::SetFalse)
-            .help(m!("Not discovery gateway")))
-        .arg(Arg::new(m!("no_ping_discovery"))
-            .long("np")
-            .action(clap::ArgAction::SetFalse)
-            .help(m!("Not use ping to discover alive hosts")))
-        .arg(Arg::new(m!("no_port_discovery"))
-            .long("npd")
-            .action(clap::ArgAction::SetFalse)
-            .help(m!("Not use port scan to discover alive hosts")))
-        .arg(Arg::new(m!("discovery_ports"))
-            .long("ps")
-            .default_value("21,22,23,80-83,443,445,3389,8080")
-            .help(m!("Ports used to discovery alive hosts")))
-        .arg(Arg::new("infile")
-            .short('i')
-            .long("infile")
-            .help(m!("Input file contains IP address")))
-        .arg(Arg::new("outfile")
-            .short('o')
-            .long("outfile")
-            .help(m!("Output file")))
-        .arg(Arg::new("wait_time")
-            .short('w')
-            .long("wait-time")
-            .default_value("0")
-            .value_parser(value_parser!(u8))
-            .help(m!("After the TCP connection is established, wait for a few seconds before verifying if the connection is still connected.")))
-        .get_matches();
-
-
+    let matches = build_args();
     let scan_targets = matches.get_one::<String>("target");
     let args_count = env::args().count();
     if args_count < 2 {
@@ -138,7 +76,7 @@ async fn start() {
     let mut outfile = if let Some(outfile) = matches.get_one::<String>("outfile") {
         let outfile_pointer;
         #[cfg(target_os = "windows")]{
-            let mut options = OpenOptions::new();
+            let mut options = std::fs::OpenOptions::new();
             options.write(true);
             options.create(true);
             options.share_mode(0x00000001);  // FILE_SHARE_READ 允许其他进程读取文件
@@ -299,6 +237,70 @@ async fn start() {
     }
 
     println!("{} open ports in total.", &ports_num);
+}
+
+fn build_args() -> ArgMatches {
+    Command::new("Simple").version("0.1.0")
+        .author("me")
+        .about(m!("Scan ports"))
+        .arg(Arg::new("target")
+            .short('t')
+            .long("target")
+            .value_parser(value_parser!(String))
+            .help(m!("Target need to scan. Example: 10.0.0.0/8,172.16.0.0-172.31.255.255,192.168.1.1")))
+        .arg(Arg::new("port")
+            .short('p')
+            .long("port")
+            .default_value(m!("goby_enterprise"))
+            .help(m!("Ports to scan. Example: 21,22,80-83,db,web,win,goby_enterprise,goby_common,goby_default,fscan_default")))
+        .arg(Arg::new("timeout")
+            .long("timeout")
+            .default_value("2")
+            .value_parser(value_parser!(u8))
+            .help(m!("Connection timeout, the unit is seconds.")))
+        .arg(Arg::new("retry")
+            .short('r')
+            .long("retry")
+            .default_value("1")
+            .value_parser(value_parser!(u8))
+            .help(m!("Retry times")))
+        .arg(Arg::new("concurrency")
+            .short('c')
+            .long("concurrency")
+            .default_value("600")
+            .value_parser(value_parser!(usize))
+            .help(m!("Maximum concurrency")))
+        .arg(Arg::new(m!("no_gateway_discovery"))
+            .long("ngd")
+            .action(clap::ArgAction::SetFalse)
+            .help(m!("Not discovery gateway")))
+        .arg(Arg::new(m!("no_ping_discovery"))
+            .long("np")
+            .action(clap::ArgAction::SetFalse)
+            .help(m!("Not use ping to discover alive hosts")))
+        .arg(Arg::new(m!("no_port_discovery"))
+            .long("npd")
+            .action(clap::ArgAction::SetFalse)
+            .help(m!("Not use port scan to discover alive hosts")))
+        .arg(Arg::new(m!("discovery_ports"))
+            .long("ps")
+            .default_value("21,22,23,80-83,443,445,3389,8080")
+            .help(m!("Ports used to discovery alive hosts")))
+        .arg(Arg::new("infile")
+            .short('i')
+            .long("infile")
+            .help(m!("Input file contains IP address")))
+        .arg(Arg::new("outfile")
+            .short('o')
+            .long("outfile")
+            .help(m!("Output file")))
+        .arg(Arg::new("wait_time")
+            .short('w')
+            .long("wait-time")
+            .default_value("0")
+            .value_parser(value_parser!(u8))
+            .help(m!("After the TCP connection is established, wait for a few seconds before verifying if the connection is still connected.")))
+        .get_matches()
 }
 
 async fn ping_scan_with_channel(
