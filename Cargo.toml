@@ -6,8 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.5.7"}
+clap = { version = "4.5.7",features = ["string"]}
 ipnet = "2.9.0"
+muddy = "0.2.1"
 num_cpus = "1.16.0"
 surge-ping = "0.8.0"
 #sha2 = "0.10"
@@ -27,4 +28,4 @@ lto= true
 codegen-units = 1
 strip = true
 opt-level = "z"
-# panic = 'abort'
+panic = 'abort'
