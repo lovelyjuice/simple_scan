@@ -36,21 +36,24 @@
 
 ## 用法
 ```shell
-Usage: simple_scan.exe [OPTIONS]
-
 Options:
   -t, --target <target>            Target need to scan. Example: 10.0.0.0/8,172.16.0.0-172.31.255.255,192.168.1.1
-  -p, --port <port>                Ports to scan. Example: 21,22,80-83,db,web,goby_enterprise,goby_common,goby_default [default: goby_enterprise]
+  -p, --port <port>                Ports to scan. Example: 21,22,80-83,db,web,win,goby_enterprise,goby_common,goby_default,fscan_default [default: goby_enterprise]
       --timeout <timeout>          Connection timeout, the unit is seconds. [default: 2]
   -r, --retry <retry>              Retry times [default: 1]
   -c, --concurrency <concurrency>  Maximum concurrency [default: 600]
       --ngd                        Not discovery gateway
       --np                         Not use ping to discover alive hosts
       --npd                        Not use port scan to discover alive hosts
-      --pe <discovery_ports>       Ports used to discovery alive hosts [default: 21,22,23,80-83,443,445,3389,8080]
+      --ps <discovery_ports>       Ports used to discovery alive hosts [default: 21,22,23,80-83,443,445,3389,8080]
   -i, --infile <infile>            Input file contains IP address
   -o, --outfile <outfile>          Output file
   -w, --wait-time <wait_time>      After the TCP connection is established, wait for a few seconds before verifying if the connection is still connected. [default: 0]
+      --log-file <log_file>        Log file
+      --log-level <log_level>      Log level [default: info]
   -h, --help                       Print help
   -V, --version                    Print version
 ```
+
+## 混淆字符串常量
+修改环境变量 `CRYPTIFY_KEY`为你自己的密钥，长度随意。即可改变混淆结果。每次修改完成后需要重新运行 `cargo clean` 才能生效
