@@ -271,7 +271,7 @@ async fn start() {
 
     for service in rx {
         ports_num += 1;
-        info!("{}:{} {} {}", service.host, service.port, service.duration.as_millis(), m!("ms"));
+        info!("{}:{} {}       {}", service.host, service.port, service.duration.as_millis(), m!("ms"));
         if let Some(ref mut outfile) = outfile {
             write!(outfile, "{}:{}\r\n", service.host, service.port);
             outfile.flush();
