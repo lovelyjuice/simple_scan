@@ -22,13 +22,13 @@ surge-ping = "0.8"
 goldberg = "0.1"
 proc_macro_crate = {path="./proc_macro_crate"}
 #ping_async = { path = "./ping-async" }
-futures = "0.3.30"
+futures = "0.3.31"
 #obfstr = "0.4.3"       # defender 会报毒
 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio = {version="1.38",features = ["rt-multi-thread","net","sync","time","process"]}
-rlimit = "0.10.1"
+rlimit = "0.10.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 tokio = {version="1.38",features = ["rt-multi-thread","net","sync","time"]}
