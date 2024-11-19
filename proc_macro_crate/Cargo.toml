@@ -1,0 +1,20 @@
+[package]
+name = "proc_macro_crate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quote = "1.0.36"
+syn = "2.0.71"
+proc-macro2 = "1.0.86"
+rand = "0.8"
+lazy_static = "1.5.0"
+
+[lib]
+proc-macro = true
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 0

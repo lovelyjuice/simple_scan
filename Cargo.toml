@@ -1,40 +1,49 @@
-#cargo-features = ["trim-paths"]
+cargo-features = ["profile-rustflags","trim-paths"]
 
 [package]
 name = "simple_scan"
 version = "0.1.0"
 edition = "2021"
-build = "build.rs"
+#build = "build.rs"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.5.7",default-features = false, features = ["string","std","help","color","usage","error-context"]}
-env_logger = { version = "0.11.3",default-features = false,features = ["humantime"] }
-ipnet = "2.9.0"
-log = "0.4.21"
-#muddy = "0.2.1"     # todo: 等待依赖更新以修复无法在Windows上交叉编译linux版本的问题
-num_cpus = "1.16.0"
-surge-ping = "0.8.1"
-goldberg = "0.1.0"
+clap = { version = "4.5",features = ["string","std","help","color","usage","error-context"]}
+env_logger = { version = "0.11", features = ["humantime"] }
+## 禁用默认的features会导致杀软报毒
+ipnet = "2.9"
+log = "0.4"
+rand = "0.8"
+#muddy = { git = "https://github.com/orph3usLyre/muddy-waters.git"}
+#num_cpus = "1.16"
+surge-ping = "0.8"
+goldberg = "0.1"
+proc_macro_crate = {path="./proc_macro_crate"}
+#ping_async = { path = "./ping-async" }
+futures = "0.3.30"
 #obfstr = "0.4.3"       # defender 会报毒
 
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tokio = {version="1.38.0",features = ["rt-multi-thread","net","sync","time","process"]}
+tokio = {version="1.38",features = ["rt-multi-thread","net","sync","time","process"]}
 rlimit = "0.10.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-tokio = {version="1.38.0",features = ["rt-multi-thread","net","sync","time"]}
-#winping = "0.10.1"
+tokio = {version="1.38",features = ["rt-multi-thread","net","sync","time"]}
+winping = "0.10.1"
 
 [profile.release]
 lto= true
-codegen-units = 1
+codegen-units = 8
+#opt-level = "s"
 strip = true
-opt-level = "z"
 panic = 'abort'
+trim-paths = 'all'
+# linux或者gnu 编译release时注释掉下面这行
+#rustflags = ["-C", "link-arg=/DEBUG:NONE","-C", "link-arg=/MANIFEST:NO","-Z","location-detail=none"]
 
-[build-dependencies]
-rand = "0.8"
+#[build-dependencies]
+#rand = "0.8"
+#proc-macro2 = "1"
