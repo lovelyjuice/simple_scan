@@ -4,6 +4,5 @@
 /.vs
 /*.log
 */target
-proc_macro_crate/Cargo.lock
-Cargo.lock
 *.txt
+Cargo.lock
