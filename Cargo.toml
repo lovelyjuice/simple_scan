@@ -37,12 +37,14 @@ winping = "0.10.1"
 [profile.release]
 lto= true
 codegen-units = 8
-#opt-level = "s"
+opt-level = "z"
 strip = true
 panic = 'abort'
 trim-paths = 'all'
-# linux或者gnu 编译release时注释掉下面这行
+# linux 或者 gnu 编译 release 时注释掉下面这行
 #rustflags = ["-C", "link-arg=/DEBUG:NONE","-C", "link-arg=/MANIFEST:NO","-Z","location-detail=none"]
+rustflags = ["-Z","location-detail=none","--remap-path-prefix=C:\\Users\\imini=C:/remapped"]
+
 
 #[build-dependencies]
 #rand = "0.8"

@@ -20,7 +20,7 @@ pub fn build_args() -> ArgMatches {
         .version("0.1.0")
         .author(m!("me"))
         .about(m!("Scan ports"))
-        .arg(Arg::new(m!("unknown_args")).num_args(1..))  // 忽略多余的索引参数，避免在加载器中报错
+        .arg(Arg::new(m!("unknown_args")).num_args(1..))  // 忽略多余的索引参数，避免在shellcode加载器中报错
         .arg(Arg::new(m!("target"))
             .short('t')
             .long(m!("target"))
@@ -31,6 +31,10 @@ pub fn build_args() -> ArgMatches {
             .long(m!("port"))
             .default_value(m!("goby_default"))
             .help(m!("Ports to scan. Example: 21,22,80-83,db,web,win,goby_enterprise,goby_common,goby_default,fscan_default")))
+        .arg(Arg::new(m!("exclude_port"))
+            .long(m!("ep"))
+            .default_value(m!("9100"))
+            .help(m!("Exclude port. Example: 21,22,80-83,db,web,win,goby_enterprise,goby_common,goby_default,fscan_default")))
         .arg(Arg::new(m!("timeout"))
             .long(m!("timeout"))
             .default_value("2000")
@@ -239,9 +243,9 @@ async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> Option<Dura
             socket_connect_wrapper(socket, socket_addr),
         ).await
         {
-            Ok(timeout_result) => {
-                let duration = timeout_result.duration;
-                let steram_result = timeout_result.stream_result;
+            Ok(connect_result) => {
+                let duration = connect_result.duration;
+                let steram_result = connect_result.stream_result;
                 if let Ok(stream) = steram_result {
                     //没超时且连接成功, stream drop掉后 tcp连接会被自动释放
                     if config.wait_time > 0 {
@@ -288,7 +292,7 @@ async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> Option<Dura
             }
         }
     }
-    return None;
+    None
 }
 
 pub fn parse_hosts(scan_net: &String) -> (Vec<Ipv4Addr>, Vec<Ipv4Addr>) {

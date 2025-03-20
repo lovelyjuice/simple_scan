@@ -1,25 +1,19 @@
 #![feature(int_roundings)]
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::net::IpAddr;
 use std::net::Ipv4Addr;
-use std::net::SocketAddr;
-use std::ops::Index;
+
 #[cfg(target_os = "windows")]
 use std::os::windows::fs::OpenOptionsExt;
 use std::process::exit;
-use std::str::FromStr;
 use std::sync::{Arc, mpsc, Mutex};
 use std::sync::OnceLock;
-use std::time::Instant;
 
-use clap;
-use clap::{Arg, ArgMatches, Command, value_parser};
 use ipnet;
-use ipnet::{Ipv4AddrRange, Ipv4Net};
+use ipnet::Ipv4Net;
 use goldberg::goldberg_int as gi;
 // use muddy::{m, muddy_init};
 // use obfstr::obfstr;
@@ -29,9 +23,6 @@ use env_logger::{Builder, Env};
 use log::{debug, info, warn};
 use surge_ping;
 use tokio;
-use tokio::net::TcpSocket;
-use tokio::{io, time};
-use tokio::time::Duration;
 use utils::ConnectConfig;
 use proc_macro_crate::process_string as m;
 
@@ -62,13 +53,13 @@ fn main() {
 async fn start() {
 
     let args_count = env::args().count();
-    let mut n: i64 = 2;
+    let n: i64 = 2;
     let mut a = (n - args_count as i64) * 100000;
     if a < 0 { a = 0 };
     #[cfg(target_os = "windows")]
     {   // 给沙箱玩的
         let mut jobs = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..2 {
             jobs.push(tokio::spawn(utils::simple_caculation(a)));
         }
         for job in jobs {
@@ -77,7 +68,9 @@ async fn start() {
     }
     let matches = utils::build_args();
     let scan_targets = matches.get_one::<String>(&m!("target"));
-    let mut ports: Vec<u16> = utils::parse_ports(matches.get_one::<String>("port").unwrap().clone());
+    let mut ports: Vec<u16> = utils::parse_ports(matches.get_one::<String>(&m!("port")).unwrap().clone());
+    let exclude_ports: HashSet<u16> = utils::parse_ports(matches.get_one::<String>(&m!("exclude_port")).unwrap().clone()).into_iter().collect();
+    ports.retain(|port| !exclude_ports.contains(&port));
     let timeout: u16 = matches.get_one::<u16>(&m!("timeout")).unwrap().to_owned();
     let jitter: u16 = matches.get_one::<u16>(&m!("jitter")).unwrap().to_owned();
     let retry: u8 = matches.get_one::<u8>(&m!("retry")).unwrap().to_owned();
@@ -106,7 +99,7 @@ async fn start() {
         #[cfg(not(target_os = "windows"))]{
             outfile_pointer = File::create(outfile).expect("Unable to create result file");
         }
-        Some(BufWriter::with_capacity(100, outfile_pointer))
+        Some(BufWriter::with_capacity(50, outfile_pointer))
     } else { None };
 
     #[cfg(target_os = "linux")]{
@@ -188,7 +181,8 @@ async fn start() {
 
         info!("{}", m!("Start scanning several common ports on gateways to discover active subnets."));
         // 混淆时必须要有类型后缀，u16不能删
-        let gateway_discovery_port: Vec<u16> = vec![gi!(21u16), gi!(22u16), gi!(23u16), gi!(25u16), gi!(80u16), gi!(443u16)];
+        let mut gateway_discovery_port: Vec<u16> = vec![gi!(21u16), gi!(22u16), gi!(23u16), gi!(25u16), gi!(80u16), gi!(443u16)];
+        gateway_discovery_port.retain(|port| ports.contains(port));
         let mut gateway_discovery_port_set: HashSet<u16> = gateway_discovery_port.into_iter().collect();
         gateway_discovery_port_set.extend(discovery_ports.iter());
         let gateway_discovery_port: Vec<u16> = gateway_discovery_port_set.into_iter().collect();
@@ -197,6 +191,7 @@ async fn start() {
         tokio::spawn(utils::port_scan_with_channel(gateways.clone(), gateway_discovery_port.clone(), concurrency.clone(), connect_config.clone(), tx));
         for service in rx {
             info!("{} {}:{}       {}{}", m!("Port scan gateway"), service.host, service.port, service.duration.as_millis(),m!("ms"));
+            println!("{}:{}", service.host, service.port);
             alive_gateways.insert(service.host);
         }
         let c_duan_mask_ip = m!("255.255.255.0");
@@ -240,6 +235,7 @@ async fn start() {
             utils::port_scan_with_channel(need_scan_host.clone(), discovery_ports.clone(), concurrency.clone(), connect_config.clone(), tx)
         );
         for service in rx {
+            println!("{}:{}", service.host, service.port);
             info!("{} {}{}{} {}", m!("Port discovery"), service.host, colon, service.port, m!("is alive."));
             alive_hosts.insert(service.host);
             if let Some(ref mut outfile) = outfile {
@@ -255,7 +251,7 @@ async fn start() {
 
     if ping_discovery || port_discovery {
         if alive_hosts.is_empty() {
-            warn!("{}", m!("No alive host found. Exit! Maybe you should disable host discovery by add --ngd --npd --np"));
+            warn!("{}", m!("No host found. Exit! Maybe you should disable host discovery by add --ngd --npd --np"));
             exit(1);
         } else {
             info!("{} {} {}", m!("Found"), alive_hosts.len(), m!("alive hosts in total!"));
@@ -278,8 +274,10 @@ async fn start() {
 
     for service in rx {
         ports_num += 1;
+        println!("{}:{}", service.host, service.port);
         info!("{}{}{} {}{}", service.host, colon, service.port, service.duration.as_millis(), m!("ms"));
         if let Some(ref mut outfile) = outfile {
+            println!("{}:{}", service.host, service.port);
             write!(outfile, "{}{}{}\r\n", service.host, colon, service.port);
             outfile.flush();
         }
