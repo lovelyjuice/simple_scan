@@ -54,6 +54,3 @@ Options:
   -h, --help                       Print help
   -V, --version                    Print version
 ```
-
-## 混淆字符串常量
-修改环境变量 `CRYPTIFY_KEY`为你自己的密钥，长度随意。即可改变混淆结果。每次修改完成后需要重新运行 `cargo clean` 才能生效

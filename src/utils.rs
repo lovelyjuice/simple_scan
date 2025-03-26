@@ -1,6 +1,7 @@
 use crate::HAS_RAW_SOCKET_PRIV;
 use clap::{value_parser, Arg, ArgMatches, Command};
 use ipnet::{Ipv4AddrRange, Ipv4Net};
+use log::{debug, info};
 // use muddy::{m, muddy_init};
 use proc_macro_crate::process_string as m;
 use rand::rngs::StdRng;
@@ -17,7 +18,7 @@ use tokio::time;
 // muddy_init!();
 pub fn build_args() -> ArgMatches {
     Command::new(m!("Simple"))
-        .version("0.1.0")
+        .version("0.1.1")
         .author(m!("me"))
         .about(m!("Scan ports"))
         .arg(Arg::new(m!("unknown_args")).num_args(1..))  // 忽略多余的索引参数，避免在shellcode加载器中报错
@@ -233,7 +234,7 @@ async fn socket_connect_wrapper(socket: TcpSocket, socket_addr: SocketAddr) -> C
 
 // 返回TCP连接建立花费的时间
 async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> Option<Duration> {
-    for _ in 0..=config.retry {
+    for retry_times in 0..=config.retry {
         let socket_addr = SocketAddr::new(IpAddr::V4(ip), port);
         let socket = TcpSocket::new_v4().unwrap();
         let mut rng: StdRng = SeedableRng::from_entropy();
@@ -277,6 +278,9 @@ async fn connect(ip: Ipv4Addr, port: u16, config: &ConnectConfig) -> Option<Dura
                                 return None;   // 写失败了说明tcp连接已关闭，端口实际未开放
                             }
                         }
+                    }
+                    if retry_times > 0{
+                        debug!("{} {} {} {}:{} ", m!("Retry"), retry_times, m!("times before connected to"),  ip, port);
                     }
                     time::sleep(jitter).await;  // 握手成功后等待随机延迟再释放连接
                     return Option::from(duration);
