@@ -2,7 +2,7 @@ cargo-features = ["profile-rustflags","trim-paths"]
 
 [package]
 name = "simple_scan"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 #build = "build.rs"
 

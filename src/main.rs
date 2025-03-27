@@ -277,7 +277,6 @@ async fn start() {
         println!("{}:{}", service.host, service.port);
         info!("{}{}{} {}{}", service.host, colon, service.port, service.duration.as_millis(), m!("ms"));
         if let Some(ref mut outfile) = outfile {
-            println!("{}:{}", service.host, service.port);
             write!(outfile, "{}{}{}\r\n", service.host, colon, service.port);
             outfile.flush();
         }

@@ -18,7 +18,7 @@ use tokio::time;
 // muddy_init!();
 pub fn build_args() -> ArgMatches {
     Command::new(m!("Simple"))
-        .version("0.1.1")
+        .version(env!("CARGO_PKG_VERSION"))
         .author(m!("me"))
         .about(m!("Scan ports"))
         .arg(Arg::new(m!("unknown_args")).num_args(1..))  // 忽略多余的索引参数，避免在shellcode加载器中报错
